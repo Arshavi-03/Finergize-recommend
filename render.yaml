@@ -3,7 +3,7 @@ services:
     name: finergize-api
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 8080
     plan: free
     envVars:
       - key: SECRET_KEY
@@ -13,7 +13,7 @@ services:
       - key: USE_OPENAI
         value: true
       - key: MODEL_PATH
-        value: models/finergize_recommender_agent.joblib
+        value: models/finergize_recommender_agent_clean.joblib
       - key: PORT
         value: 8080
       - key: PYTHON_VERSION

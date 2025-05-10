@@ -15,7 +15,7 @@ class RecommenderService:
         self.load_model()
         
         # Configure OpenAI API key
-        openai_api_key = current_app.config.get('OPENAI_API_KEY')
+        openai_api_key = os.environ.get('OPENAI_API_KEY')
         if openai_api_key:
             try:
                 openai.api_key = openai_api_key
@@ -37,8 +37,10 @@ class RecommenderService:
     def load_model(self):
         """Load the recommender model from joblib file"""
         try:
-            # Updated to look for clean model first
-            model_path = current_app.config.get('MODEL_PATH', 'models/finergize_recommender_agent_clean.joblib')
+            # Get model path from environment or use default
+            model_path = os.environ.get('MODEL_PATH', 'models/finergize_recommender_agent_clean.joblib')
+            self.logger.info(f"Loading model from {model_path}")
+            
             self.model = joblib.load(model_path)
             self.logger.info(f"Successfully loaded model from {model_path}")
             
@@ -274,7 +276,7 @@ Your goal is to recommend the most suitable Finergize features based on user sur
                 }
         
         # Get OpenAI API key
-        openai_api_key = current_app.config.get('OPENAI_API_KEY')
+        openai_api_key = os.environ.get('OPENAI_API_KEY')
                 
         # Create our basic model
         features = self.finergize_features
@@ -405,12 +407,87 @@ Your goal is to recommend the most suitable Finergize features based on user sur
                 # Log the responses for debugging
                 self.logger.info(f"Processing recommendations for responses: {json.dumps(responses)}")
                 
-                # Check if the model has OpenAI integration and it's enabled
-                if hasattr(self.model, 'has_api') and self.model.has_api:
+                # Check if OpenAI integration is enabled and configured
+                if hasattr(self.model, 'has_api') and self.model.has_api and self.model.api_key:
                     self.logger.info("Using OpenAI-enhanced recommendations")
-                else:
-                    self.logger.info("Using base recommendation algorithm")
                     
+                    try:
+                        # Use OpenAI directly for enhanced recommendations
+                        import openai
+                        openai.api_key = self.model.api_key
+                        
+                        # Prepare a prompt for OpenAI
+                        prompt = f"""
+                        Based on the following survey responses, recommend and prioritize the six Finergize features for this user:
+
+                        Survey Responses:
+                        {json.dumps(responses, indent=2)}
+                        
+                        Finergize Features:
+                        1. Digital Banking - Modern mobile banking services with UPI, bill payments, and account management
+                        2. Mutual Funds - Simple investment options in diversified mutual funds
+                        3. Community Savings - Group-based savings programs for family/community goals
+                        4. Micro Loans - Small, accessible loans with simple application process
+                        5. Analytics Profile - Personal financial insights and spending analysis
+                        6. Financial Education - Courses and resources on financial literacy
+                        
+                        For each feature, provide:
+                        1. A relevance score from 1-10 (10 being most relevant)
+                        2. A brief explanation of why it's recommended based on their responses
+                        3. A personalized tip for getting started with the feature
+                        
+                        Order the features from most to least relevant for this specific user.
+                        Format your response as JSON with each feature as a key, containing score, explanation and tip fields.
+                        """
+                        
+                        # Call OpenAI
+                        response = openai.ChatCompletion.create(
+                            model="gpt-3.5-turbo",
+                            messages=[
+                                {"role": "system", "content": "You are a specialized financial advisor for Finergize, an Indian financial platform."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=0.7
+                        )
+                        
+                        # Extract and parse the response
+                        ai_response = response.choices[0].message.content
+                        try:
+                            recommendations = json.loads(ai_response)
+                            
+                            # Format for display
+                            formatted_recommendations = {
+                                "prioritized_features": [],
+                                "user_profile": {
+                                    "knowledge_level": responses.get("financial_knowledge", "beginner"),
+                                    "income_level": self.map_income_level(responses.get("income_range", "income_medium"))
+                                }
+                            }
+                            
+                            # Add features in order of relevance
+                            for feature_id, details in sorted(recommendations.items(), key=lambda x: x[1].get('score', 0), reverse=True):
+                                feature_name = self.get_feature_name(feature_id)
+                                
+                                formatted_recommendations["prioritized_features"].append({
+                                    "id": feature_id,
+                                    "name": feature_name,
+                                    "score": details.get('score', 5),
+                                    "explanation": details.get('explanation', ''),
+                                    "tip": details.get('tip', '')
+                                })
+                            
+                            return formatted_recommendations
+                        
+                        except json.JSONDecodeError:
+                            self.logger.error("Error parsing OpenAI response as JSON")
+                            # Continue to fallback if JSON parsing fails
+                        
+                    except Exception as e:
+                        self.logger.error(f"Error using OpenAI: {e}")
+                        # Continue to use base algorithm or fallback
+                
+                # If OpenAI integration failed or is not available, use base algorithm
+                self.logger.info("Using base recommendation algorithm")
                 return self.model.recommend_features(responses)
             else:
                 self.logger.error("Model not initialized properly")
@@ -435,6 +512,28 @@ Your goal is to recommend the most suitable Finergize features based on user sur
         except Exception as e:
             self.logger.error(f"Error retrieving features: {e}")
             return {}
+    
+    def get_feature_name(self, feature_id):
+        """Get the display name for a feature ID"""
+        # Clean up the feature ID if needed
+        feature_id = feature_id.lower().strip().replace(" ", "_")
+        
+        # Get features from model or fallback
+        features = self.get_features()
+        
+        # Check for exact matches first
+        if feature_id in features:
+            return features[feature_id]["name"]
+        
+        # Try partial matches
+        for key, feature in features.items():
+            if key in feature_id or feature_id in key:
+                return feature["name"]
+            if feature["name"].lower() in feature_id or feature_id in feature["name"].lower():
+                return feature["name"]
+        
+        # Return a default if no match found
+        return feature_id.replace("_", " ").title()
     
     def generate_fallback_recommendations(self, responses):
         """Generate basic feature recommendations as a fallback"""

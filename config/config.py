@@ -13,8 +13,8 @@ class Config:
     OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
     USE_OPENAI = os.environ.get('USE_OPENAI', 'True').lower() == 'true'
     
-    # Model settings - updated to use the full model with OpenAI integration
-    MODEL_PATH = os.environ.get('MODEL_PATH', 'models/finergize_recommender_agent.joblib')
+    # Model settings - updated to use the clean model
+    MODEL_PATH = os.environ.get('MODEL_PATH', 'models/finergize_recommender_agent_clean.joblib')
     
     # Debug settings
     DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
