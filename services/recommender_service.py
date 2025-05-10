@@ -2,7 +2,6 @@ import os
 import json
 import joblib
 import logging
-from flask import current_app
 import openai
 
 class RecommenderService:
