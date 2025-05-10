@@ -2,7 +2,7 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Copy requirements first for better layer caching
+# Copy requirements file
 COPY requirements.txt .
 
 # Install dependencies
@@ -11,8 +11,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application
 COPY . .
 
-# Expose the port the app runs on
+# Expose the port
 EXPOSE 8080
 
-# Command to run the application
-CMD gunicorn --bind 0.0.0.0:8080 app:app
+# Command to run the application using Uvicorn
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
