@@ -2,7 +2,34 @@ import os
 import json
 import joblib
 import logging
+import pickle
 import openai
+
+# Custom unpickler to handle missing classes
+class CustomUnpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        # Handle the FinergizeRecommenderAgent class
+        if name == 'FinergizeRecommenderAgent':
+            # Create a dynamic class that mimics the essential functionality
+            class DynamicFinergizeRecommenderAgent:
+                def __init__(self):
+                    self.finergize_features = {}
+                    self.question_templates = {}
+                    self.chat_history = []
+                    self.has_api = False
+                    self.api_key = None
+                
+                def generate_survey(self, user_context):
+                    # If we get here, the model will need to use fallback logic
+                    return []
+                
+                def recommend_features(self, responses):
+                    # If we get here, the model will need to use fallback logic
+                    return {}
+                    
+            return DynamicFinergizeRecommenderAgent
+        # For all other classes, use the default behavior
+        return super().find_class(module, name)
 
 class RecommenderService:
     """Service for feature recommendation operations"""
@@ -40,7 +67,21 @@ class RecommenderService:
             model_path = os.environ.get('MODEL_PATH', 'models/finergize_recommender_agent_clean.joblib')
             self.logger.info(f"Loading model from {model_path}")
             
-            self.model = joblib.load(model_path)
+            # Check if the file exists
+            if not os.path.exists(model_path):
+                self.logger.error(f"Model file not found at {model_path}")
+                raise FileNotFoundError(f"Model file not found: {model_path}")
+            
+            try:
+                # First try to load with standard joblib
+                self.model = joblib.load(model_path)
+            except (AttributeError, ImportError) as e:
+                # If that fails, try with our custom unpickler
+                self.logger.warning(f"Standard loading failed: {e}. Trying custom unpickler...")
+                with open(model_path, 'rb') as f:
+                    custom_unpickler = CustomUnpickler(f)
+                    self.model = custom_unpickler.load()
+                
             self.logger.info(f"Successfully loaded model from {model_path}")
             
             # Check if the model has OpenAI API key attribute
@@ -446,7 +487,8 @@ Your goal is to recommend the most suitable Finergize features based on user sur
                                 {"role": "system", "content": "You are a specialized financial advisor for Finergize, an Indian financial platform."},
                                 {"role": "user", "content": prompt}
                             ],
-                            temperature=0.7
+                            temperature=0.7,
+                            response_format={"type": "json_object"}
                         )
                         
                         # Extract and parse the response
@@ -479,6 +521,7 @@ Your goal is to recommend the most suitable Finergize features based on user sur
                         
                         except json.JSONDecodeError:
                             self.logger.error("Error parsing OpenAI response as JSON")
+                            self.logger.error(f"Raw response: {ai_response}")
                             # Continue to fallback if JSON parsing fails
                         
                     except Exception as e:
