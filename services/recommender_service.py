@@ -3,7 +3,15 @@ import json
 import joblib
 import logging
 import pickle
-import openai
+
+# Try to import the modern OpenAI client
+try:
+    from openai import OpenAI
+    OPENAI_MODERN = True
+except ImportError:
+    # Fall back to old client if needed
+    import openai
+    OPENAI_MODERN = False
 
 # Custom unpickler to handle missing classes
 class CustomUnpickler(pickle.Unpickler):
@@ -38,13 +46,19 @@ class RecommenderService:
         """Initialize the recommender service"""
         self.logger = logging.getLogger(__name__)
         self.model = None
+        self.openai_client = None
         self.load_model()
         
         # Configure OpenAI API key
         openai_api_key = os.environ.get('OPENAI_API_KEY')
         if openai_api_key:
             try:
-                openai.api_key = openai_api_key
+                # Initialize the API client based on version
+                if OPENAI_MODERN:
+                    self.openai_client = OpenAI(api_key=openai_api_key)
+                else:
+                    openai.api_key = openai_api_key
+                
                 self.has_api = True
                 self.logger.info("OpenAI API configured successfully")
                 
@@ -452,10 +466,6 @@ Your goal is to recommend the most suitable Finergize features based on user sur
                     self.logger.info("Using OpenAI-enhanced recommendations")
                     
                     try:
-                        # Use OpenAI directly for enhanced recommendations
-                        import openai
-                        openai.api_key = self.model.api_key
-                        
                         # Prepare a prompt for OpenAI
                         prompt = f"""
                         Based on the following survey responses, recommend and prioritize the six Finergize features for this user:
@@ -480,19 +490,33 @@ Your goal is to recommend the most suitable Finergize features based on user sur
                         Format your response as JSON with each feature as a key, containing score, explanation and tip fields.
                         """
                         
-                        # Call OpenAI
-                        response = openai.ChatCompletion.create(
-                            model="gpt-3.5-turbo",
-                            messages=[
-                                {"role": "system", "content": "You are a specialized financial advisor for Finergize, an Indian financial platform."},
-                                {"role": "user", "content": prompt}
-                            ],
-                            temperature=0.7,
-                            response_format={"type": "json_object"}
-                        )
+                        # Use the appropriate OpenAI client based on what's available
+                        if OPENAI_MODERN and self.openai_client:
+                            # Use the modern client (v1.0+)
+                            response = self.openai_client.chat.completions.create(
+                                model="gpt-3.5-turbo",
+                                messages=[
+                                    {"role": "system", "content": "You are a specialized financial advisor for Finergize, an Indian financial platform."},
+                                    {"role": "user", "content": prompt}
+                                ],
+                                temperature=0.7,
+                                response_format={"type": "json_object"}
+                            )
+                            ai_response = response.choices[0].message.content
+                        else:
+                            # Fall back to the old client if necessary
+                            response = openai.ChatCompletion.create(
+                                model="gpt-3.5-turbo",
+                                messages=[
+                                    {"role": "system", "content": "You are a specialized financial advisor for Finergize, an Indian financial platform."},
+                                    {"role": "user", "content": prompt}
+                                ],
+                                temperature=0.7,
+                                response_format={"type": "json_object"}
+                            )
+                            ai_response = response.choices[0].message.content
                         
                         # Extract and parse the response
-                        ai_response = response.choices[0].message.content
                         try:
                             recommendations = json.loads(ai_response)
                             
