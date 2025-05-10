@@ -10,7 +10,7 @@ from services.recommender_service import RecommenderService
 app = FastAPI(
     title="Finergize Recommender API",
     description="API for personalized financial feature recommendations",
-    version="1.0.0"
+    version="1.1.0"
 )
 
 # Enable CORS
@@ -41,7 +41,7 @@ def health_check():
     """Health check endpoint"""
     return {
         "status": "healthy",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "service": "Finergize Recommender API"
     }
 
@@ -106,62 +106,76 @@ def get_features(service: RecommenderService = Depends(get_service)):
 @app.get("/debug")
 def debug_info():
     """Debug endpoint to verify configuration"""
-    import openai
-    from config.config import Config
-    
-    service = get_service()
-    
-    # Check API key configuration
-    openai_key = os.environ.get('OPENAI_API_KEY', 'Not set')
-    openai_key_masked = f"{openai_key[:5]}...{openai_key[-4:]}" if len(openai_key) > 9 else "Not properly set"
-    
-    openai_module_key = openai.api_key
-    openai_module_key_masked = f"{openai_module_key[:5]}...{openai_module_key[-4:]}" if openai_module_key and len(openai_module_key) > 9 else "Not properly set"
-    
-    # Check model configuration
-    model_info = {
-        'model_loaded': service.model is not None,
-        'model_path': os.environ.get('MODEL_PATH', 'Default path')
-    }
-    
-    if service.model:
-        model_info['has_api_attr'] = hasattr(service.model, 'has_api')
-        model_info['has_api_value'] = getattr(service.model, 'has_api', None)
-        model_info['api_key_attr'] = hasattr(service.model, 'api_key')
-        model_info['api_key_set'] = bool(getattr(service.model, 'api_key', None))
-        
-        if hasattr(service.model, 'api_key') and service.model.api_key:
-            model_key = service.model.api_key
-            model_info['api_key_masked'] = f"{model_key[:5]}...{model_key[-4:]}" if len(model_key) > 9 else "Invalid format"
-    
-    # Check if we can make a simple OpenAI call
-    openai_test = {}
     try:
-        if openai_module_key:
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": "Test"}],
-                max_tokens=5
-            )
-            openai_test['success'] = True
-            openai_test['response'] = str(response)
+        # Import openai locally to avoid issues if not installed
+        try:
+            from openai import OpenAI
+            openai_available = True
+        except ImportError:
+            openai_available = False
+        
+        service = get_service()
+        
+        # Check API key configuration
+        openai_key = os.environ.get('OPENAI_API_KEY', 'Not set')
+        openai_key_masked = f"{openai_key[:5]}...{openai_key[-4:]}" if len(openai_key) > 9 else "Not properly set"
+        
+        # Check if client is properly configured
+        openai_client_configured = hasattr(service, 'openai_client') and service.openai_client is not None
+        
+        # Check model configuration
+        model_info = {
+            'model_loaded': service.model is not None,
+            'model_path': os.environ.get('MODEL_PATH', 'Default path')
+        }
+        
+        if service.model:
+            model_info['has_api_attr'] = hasattr(service.model, 'has_api')
+            model_info['has_api_value'] = getattr(service.model, 'has_api', None)
+            model_info['api_key_attr'] = hasattr(service.model, 'api_key')
+            model_info['api_key_set'] = bool(getattr(service.model, 'api_key', None))
+            
+            if hasattr(service.model, 'api_key') and service.model.api_key:
+                model_key = service.model.api_key
+                model_info['api_key_masked'] = f"{model_key[:5]}...{model_key[-4:]}" if len(model_key) > 9 else "Invalid format"
+        
+        # Check if we can make a simple OpenAI call
+        openai_test = {}
+        if openai_available and openai_client_configured:
+            try:
+                # Test with a simple completion
+                response = service.openai_client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[{"role": "user", "content": "Test"}],
+                    max_tokens=5
+                )
+                openai_test['success'] = True
+                openai_test['response'] = str(response)
+            except Exception as e:
+                openai_test['success'] = False
+                openai_test['error'] = str(e)
+        else:
+            openai_test['success'] = False
+            openai_test['error'] = "OpenAI client not configured"
+        
+        # Return all debug info
+        return {
+            'environment': {
+                'openai_key_configured': bool(openai_key) and openai_key != 'Not set', 
+                'openai_key_masked': openai_key_masked,
+                'openai_client_configured': openai_client_configured,
+                'openai_available': openai_available,
+                'use_openai': os.environ.get('USE_OPENAI', 'Not set')
+            },
+            'model_info': model_info,
+            'openai_test': openai_test,
+            'service_has_api': service.has_api
+        }
     except Exception as e:
-        openai_test['success'] = False
-        openai_test['error'] = str(e)
-    
-    # Return all debug info
-    return {
-        'environment': {
-            'openai_key_configured': bool(openai_key) and openai_key != 'Not set', 
-            'openai_key_masked': openai_key_masked,
-            'openai_module_key_configured': bool(openai_module_key),
-            'openai_module_key_masked': openai_module_key_masked,
-            'use_openai': os.environ.get('USE_OPENAI', 'Not set')
-        },
-        'model_info': model_info,
-        'openai_test': openai_test,
-        'service_has_api': service.has_api
-    }
+        return {
+            'error': str(e),
+            'status': 'error'
+        }
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
